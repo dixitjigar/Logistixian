@@ -1,0 +1,307 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  BUYER
+  SUPPLIER
+  ADMIN
+}
+
+enum DocumentType {
+  NDA
+  CONTRACT
+  MOU
+  LOI
+  AGREEMENT
+  INVOICE
+  QUOTE
+  RFQ
+}
+
+enum DocumentStatus {
+  DRAFT
+  PENDING_SIGNATURE
+  SIGNED
+  REJECTED
+  EXPIRED
+}
+
+enum RFQStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  EVALUATING
+  AWARDED
+  CANCELLED
+}
+
+enum QuoteStatus {
+  PENDING
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  NEGOTIATING
+}
+
+enum AuditStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  role          UserRole
+  companyId     String?
+  company       Company?  @relation(fields: [companyId], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sentDocuments     Document[] @relation("DocumentSender")
+  receivedDocuments Document[] @relation("DocumentRecipient")
+  rfqs              RFQ[]
+  quotes            Quote[]
+  audits            Audit[]
+  evaluations       SupplierEvaluation[]
+
+  @@index([email])
+  @@index([role])
+  @@index([companyId])
+}
+
+model Company {
+  id          String    @id @default(uuid())
+  name        String
+  type        UserRole
+  industry    String?
+  country     String?
+  website     String?
+  description String?
+  verified    Boolean   @default(false)
+  rating      Float?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  users       User[]
+  rfqs        RFQ[]
+  quotes      Quote[]
+  audits      Audit[]
+  qbrs        QBR[]
+  evaluations SupplierEvaluation[]
+
+  @@index([type])
+  @@index([country])
+  @@index([verified])
+}
+
+model Document {
+  id             String         @id @default(uuid())
+  title          String
+  type           DocumentType
+  status         DocumentStatus @default(DRAFT)
+  senderId       String
+  sender         User           @relation("DocumentSender", fields: [senderId], references: [id])
+  recipientId    String
+  recipient      User           @relation("DocumentRecipient", fields: [recipientId], references: [id])
+  content        String
+  signatureData  String?
+  signedAt       DateTime?
+  expiresAt      DateTime?
+  blockchainTxHash String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([blockchainTxHash])
+}
+
+model RFQ {
+  id             String      @id @default(uuid())
+  title          String
+  description    String
+  buyerId        String
+  buyer          User        @relation(fields: [buyerId], references: [id])
+  status         RFQStatus   @default(DRAFT)
+  items          RFQItem[]
+  deadline       DateTime
+  awardedQuoteId String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  quotes Quote[]
+
+  @@index([status])
+  @@index([buyerId])
+  @@index([deadline])
+}
+
+model RFQItem {
+  id             String  @id @default(uuid())
+  rfqId          String
+  rfq            RFQ     @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  name           String
+  description    String
+  quantity       Int
+  unit           String
+  specifications String?
+
+  quoteItems QuoteItem[]
+
+  @@index([rfqId])
+}
+
+model Quote {
+  id         String     @id @default(uuid())
+  rfqId      String
+  rfq        RFQ        @relation(fields: [rfqId], references: [id])
+  supplierId String
+  supplier   User       @relation(fields: [supplierId], references: [id])
+  status     QuoteStatus @default(PENDING)
+  items      QuoteItem[]
+  totalAmount Float
+  currency   String     @default("USD")
+  validUntil DateTime
+  notes      String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@index([rfqId])
+  @@index([supplierId])
+  @@index([status])
+}
+
+model QuoteItem {
+  id             String  @id @default(uuid())
+  quoteId        String
+  quote          Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  rfqItemId      String
+  rfqItem        RFQItem @relation(fields: [rfqItemId], references: [id])
+  unitPrice      Float
+  quantity       Int
+  totalPrice     Float
+  leadTime       Int?
+  specifications String?
+
+  @@index([quoteId])
+  @@index([rfqItemId])
+}
+
+model Audit {
+  id            String      @id @default(uuid())
+  supplierId    String
+  supplier      User        @relation(fields: [supplierId], references: [id])
+  auditorId     String
+  auditor       User        @relation(fields: [auditorId], references: [id])
+  status        AuditStatus @default(SCHEDULED)
+  scheduledDate DateTime
+  completedDate DateTime?
+  findings      AuditFinding[]
+  score         Float?
+  report        String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([scheduledDate])
+}
+
+model AuditFinding {
+  id          String   @id @default(uuid())
+  auditId     String
+  audit       Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  category    String
+  severity    String
+  description String
+  remediation String?
+  status      String   @default("OPEN")
+
+  @@index([auditId])
+  @@index([severity])
+}
+
+model QBR {
+  id           String    @id @default(uuid())
+  buyerId      String
+  supplierId   String
+  quarter      String
+  meetingDate  DateTime?
+  kpis         QBRKPI[]
+  actionItems  QBRActionItem[]
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([buyerId])
+  @@index([supplierId])
+  @@index([quarter])
+}
+
+model QBRKPI {
+  id        String  @id @default(uuid())
+  qbrId     String
+  qbr       QBR     @relation(fields: [qbrId], references: [id], onDelete: Cascade)
+  name      String
+  target    Float
+  actual    Float
+  unit      String
+  weight    Float
+
+  @@index([qbrId])
+}
+
+model QBRActionItem {
+  id          String   @id @default(uuid())
+  qbrId       String
+  qbr         QBR      @relation(fields: [qbrId], references: [id], onDelete: Cascade)
+  description String
+  owner       String
+  dueDate     DateTime
+  status      String   @default("PENDING")
+
+  @@index([qbrId])
+  @@index([status])
+}
+
+model SupplierEvaluation {
+  id            String   @id @default(uuid())
+  supplierId    String
+  supplier      User     @relation(fields: [supplierId], references: [id])
+  evaluatorId   String
+  evaluator     User     @relation(fields: [evaluatorId], references: [id])
+  period        String
+  categories    EvaluationCategory[]
+  overallScore  Float
+  comments      String?
+  createdAt     DateTime @default(now())
+
+  @@index([supplierId])
+  @@index([period])
+}
+
+model EvaluationCategory {
+  id         String              @id @default(uuid())
+  evaluationId String
+  evaluation   SupplierEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  name       String
+  score      Float
+  maxScore   Float
+  weight     Float
+  comments   String?
+
+  @@index([evaluationId])
+}
